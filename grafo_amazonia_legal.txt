@@ -1,0 +1,10 @@
+5 4
+0 RioBranco 1
+1 CruzeiroDoSul 0
+2 SenaMadureira 0
+3 Manaus 1
+4 Parintins 0
+0 1 720
+0 2 310
+1 2 450
+3 4 300
