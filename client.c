@@ -10,33 +10,42 @@
 #include "graph.h"
 
 
+
+
 Graph amazonia_map;
+
 
 int current_status[MAX_NODES];
 pthread_mutex_t status_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+
 int sockfd;
 struct sockaddr_storage server_addr;
 socklen_t server_addr_len;
-pthread_mutex_t socket_mutex = PTHREAD_MUTEX_INITIALIZER; // Protects sendto()
+pthread_mutex_t socket_mutex = PTHREAD_MUTEX_INITIALIZER; 
+
 
 pthread_cond_t cond_telemetry_ack = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t mutex_telemetry_ack = PTHREAD_MUTEX_INITIALIZER;
 int telemetry_ack_received = 0;
 
+
 typedef struct {
     int city_id;
     int team_id;
-    int active; // 1 ise missao pendente
+    int active; 
 } Mission;
 
 Mission current_mission = { -1, -1, 0 };
 pthread_cond_t cond_mission_start = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t mutex_mission = PTHREAD_MUTEX_INITIALIZER;
 
+
 pthread_cond_t cond_conclusao_ack = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t mutex_conclusao_ack = PTHREAD_MUTEX_INITIALIZER;
 int conclusao_ack_received = 0;
+
+
 
 
 void send_udp_packet(void *buffer, size_t len) {
@@ -45,22 +54,23 @@ void send_udp_packet(void *buffer, size_t len) {
     pthread_mutex_unlock(&socket_mutex);
 }
 
-//---- Thread 1: simulacao de monitoramento ----
-void *thread_monitoring(void *arg) {
+
+void *thread_monitoring(void *_arg) {
     printf("[Thread Monitoramento] Iniciada\n");
-    srand(time(NULL));
+    srand(time(NULL)); 
 
     while (1) {
+        
         sleep(5); 
 
         pthread_mutex_lock(&status_mutex);
         
         int alerts = 0;
         for (int i = 0; i < amazonia_map.num_nodes; i++) {
+            
             if ((rand() % 100) < 3) {
                 current_status[i] = 1;
                 alerts++;
-                // printf("SENSOR: Alerta detectado em %s (ID=%d)\n", amazonia_map.nodes[i].name, i);
             } else {
                 current_status[i] = 0; 
             }
@@ -70,12 +80,13 @@ void *thread_monitoring(void *arg) {
     return NULL;
 }
 
-//---- Thread 2: envio de telemetria ----
+
 void *thread_telemetry(void *arg) {
     printf("[Thread Telemetria] Iniciada\n");
 
     while (1) {
-        sleep(10);
+        
+        sleep(30);
 
         printf("\n[ENVIANDO TELEMETRIA]\n");
 
@@ -99,12 +110,15 @@ void *thread_telemetry(void *arg) {
         }
         pthread_mutex_unlock(&status_mutex);
 
+        
         char buffer[sizeof(header_t) + sizeof(payload_telemetria_t)];
         memcpy(buffer, &header, sizeof(header_t));
         memcpy(buffer + sizeof(header_t), &payload, sizeof(payload_telemetria_t));
 
+        
         send_udp_packet(buffer, sizeof(buffer));
 
+        
         pthread_mutex_lock(&mutex_telemetry_ack);
         struct timeval now;
         struct timespec timeout;
@@ -115,7 +129,7 @@ void *thread_telemetry(void *arg) {
         while (telemetry_ack_received == 0) {
             int rc = pthread_cond_timedwait(&cond_telemetry_ack, &mutex_telemetry_ack, &timeout);
             if (rc != 0) {
-                printf("Timeout aguardando ACK de telemetria.\n");
+                printf("Timeout aguardando ACK de telemetria (tentativa única nesta versao).\n");
                 break;
             }
         }
@@ -129,31 +143,36 @@ void *thread_telemetry(void *arg) {
     return NULL;
 }
 
-//--- Thread 4: simulacao de drones ----
-void *thread_drone_sim(void *arg) {
+
+void *thread_drone_sim(void *_arg) {
     printf("[Thread Simulacao Drones] Iniciada\n");
 
     while (1) {
         Mission my_mission;
 
+        
         pthread_mutex_lock(&mutex_mission);
         while (current_mission.active == 0) {
             pthread_cond_wait(&cond_mission_start, &mutex_mission);
         }
+        
         my_mission = current_mission;
         pthread_mutex_unlock(&mutex_mission);
 
+        
         printf("\n[MISSAO EM ANDAMENTO]\n");
         printf("Equipe %s atuando em %s\n", 
                amazonia_map.nodes[my_mission.team_id].name, 
                amazonia_map.nodes[my_mission.city_id].name);
         
-        int duration = (rand() % 15) + 5; 
+        
+        int duration = (rand() % 30) + 1; 
         printf("Tempo estimado: %d segundos\n", duration);
         sleep(duration);
 
         printf("Missao concluida!\n");
 
+        
         header_t header;
         payload_conclusao_t payload;
 
@@ -169,6 +188,7 @@ void *thread_drone_sim(void *arg) {
         send_udp_packet(buffer, sizeof(buffer));
         printf("Conclusao enviada ao servidor\n");
 
+        
         pthread_mutex_lock(&mutex_conclusao_ack);
         while (conclusao_ack_received == 0) {
             pthread_cond_wait(&cond_conclusao_ack, &mutex_conclusao_ack);
@@ -176,6 +196,7 @@ void *thread_drone_sim(void *arg) {
         conclusao_ack_received = 0;
         pthread_mutex_unlock(&mutex_conclusao_ack);
 
+        
         pthread_mutex_lock(&mutex_mission);
         current_mission.active = 0;
         pthread_mutex_unlock(&mutex_mission);
@@ -183,16 +204,17 @@ void *thread_drone_sim(void *arg) {
     return NULL;
 }
 
-// --- Thread 3: udp dispatcher ----
-void *thread_receiver(void *arg) {
+
+void *thread_receiver(void *_arg) {
     printf("[Thread Recepcao] Iniciada\n");
     char buffer[BUF_SIZE];
     struct sockaddr_storage src_addr;
     socklen_t src_len = sizeof(src_addr);
 
     while (1) {
+        
         ssize_t len = recvfrom(sockfd, buffer, BUF_SIZE, 0, (struct sockaddr *)&src_addr, &src_len);
-        if (len < sizeof(header_t)) continue;
+        if (len < (ssize_t)sizeof(header_t)) continue;
 
         header_t *header = (header_t *)buffer;
         uint16_t type = ntohs(header->type);
@@ -203,11 +225,13 @@ void *thread_receiver(void *arg) {
                 int status = ntohl(ack->status);
                 
                 if (status == ACK_TELEMETRIA) {
+                    
                     pthread_mutex_lock(&mutex_telemetry_ack);
                     telemetry_ack_received = 1;
                     pthread_cond_signal(&cond_telemetry_ack);
                     pthread_mutex_unlock(&mutex_telemetry_ack);
                 } else if (status == ACK_CONCLUSAO) {
+                    
                     pthread_mutex_lock(&mutex_conclusao_ack);
                     conclusao_ack_received = 1;
                     pthread_cond_signal(&cond_conclusao_ack);
@@ -225,6 +249,7 @@ void *thread_receiver(void *arg) {
                 printf("Cidade: %s (ID=%d)\n", amazonia_map.nodes[city_id].name, city_id);
                 printf("Equipe: %s (ID=%d)\n", amazonia_map.nodes[team_id].name, team_id);
 
+                
                 header_t ack_hdr;
                 payload_ack_t ack_pl;
                 ack_hdr.type = htons(MSG_ACK);
@@ -238,9 +263,12 @@ void *thread_receiver(void *arg) {
                 send_udp_packet(ack_buf, sizeof(ack_buf));
                 printf("ACK enviado ao servidor\n");
 
+                
                 pthread_mutex_lock(&mutex_mission);
                 if (current_mission.active) {
-                    printf("AVISO: Ja existe missao ativa, ordem ignorada ou na fila (simulacao simples)\n");
+                    
+                    
+                    printf("AVISO: Ja existe missao ativa localmente, nova ordem ignorada.\n");
                 } else {
                     current_mission.city_id = city_id;
                     current_mission.team_id = team_id;
@@ -258,30 +286,38 @@ void *thread_receiver(void *arg) {
 
 
 int main(int argc, char *argv[]) {
+    
     if (argc < 2) {
-        printf("Uso: %s <ipv4|ipv6> [hostname]\n", argv[0]);
+        printf("Uso: %s <v4|v6> [hostname]\n", argv[0]);
         return 1;
     }
 
-    const char *protocol = argv[1];
-    const char *hostname = (argc > 2) ? argv[2] : "127.0.0.1";
+    const char *protocol_mode = argv[1];
+    const char *hostname = (argc > 2) ? argv[2] : NULL; 
 
+    
     if (load_graph("grafo_amazonia_legal.txt", &amazonia_map) != 0) {
         fprintf(stderr, "Erro ao carregar grafo.\n");
         return 1;
     }
-
     memset(current_status, 0, sizeof(current_status));
 
+    
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_DGRAM;
     
-    if (strcmp(protocol, "v6") == 0) {
+    if (strcmp(protocol_mode, "v6") == 0) {
         hints.ai_family = AF_INET6;
-        if (argc < 3) hostname = "::1";
-    } else {
+        
+        if (!hostname) hostname = "::1";
+    } else if (strcmp(protocol_mode, "v4") == 0) {
         hints.ai_family = AF_INET;
+        
+        if (!hostname) hostname = "127.0.0.1";
+    } else {
+        fprintf(stderr, "Modo invalido: use 'v4' ou 'v6'\n");
+        return 1;
     }
 
     if (getaddrinfo(hostname, PORT, &hints, &res) != 0) {
@@ -295,12 +331,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    
     memcpy(&server_addr, res->ai_addr, res->ai_addrlen);
     server_addr_len = res->ai_addrlen;
     freeaddrinfo(res);
 
     printf("Conectado ao servidor %s:%s\n", hostname, PORT);
 
+    
     pthread_t t1, t2, t3, t4;
 
     pthread_create(&t1, NULL, thread_monitoring, NULL);

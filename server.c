@@ -8,7 +8,8 @@
 #include "graph.h"
 
 Graph amazonia_graph;
-int drone_teams_status[MAX_NODES]; // 0 = disponivel, 1 = ocupado
+int drone_teams_status[MAX_NODES]; 
+int city_mission_active[MAX_NODES]; 
 
 void send_ack(int socket_fd, struct sockaddr *dest_addr, socklen_t addr_len, int ack_type) {
     header_t header;
@@ -18,7 +19,7 @@ void send_ack(int socket_fd, struct sockaddr *dest_addr, socklen_t addr_len, int
     header.length = htons(sizeof(payload_ack_t));
     payload.status = htonl(ack_type); 
 
-    // Buffer to hold header + payload
+    
     char buffer[sizeof(header_t) + sizeof(payload_ack_t)];
     memcpy(buffer, &header, sizeof(header_t));
     memcpy(buffer + sizeof(header_t), &payload, sizeof(payload_ack_t));
@@ -27,18 +28,34 @@ void send_ack(int socket_fd, struct sockaddr *dest_addr, socklen_t addr_len, int
 }
 
 int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Uso: %s <v4|v6>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    int ai_family = AF_UNSPEC;
+    if (strcmp(argv[1], "v4") == 0) {
+        ai_family = AF_INET;
+    } else if (strcmp(argv[1], "v6") == 0) {
+        ai_family = AF_INET6;
+    } else {
+        fprintf(stderr, "Erro: Argumento invalido. Use 'v4' ou 'v6'.\n");
+        exit(EXIT_FAILURE);
+    }
+    
     if (load_graph("grafo_amazonia_legal.txt", &amazonia_graph) != 0) {
         fprintf(stderr, "Failed to load graph. Exiting.\n");
         exit(EXIT_FAILURE);
     }
-
+    
     memset(drone_teams_status, 0, sizeof(drone_teams_status));
+    memset(city_mission_active, 0, sizeof(city_mission_active));
 
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;    // IPv4 or IPv6
-    hints.ai_socktype = SOCK_DGRAM; // UDP
-    hints.ai_flags = AI_PASSIVE;    // For bind
+    hints.ai_family = ai_family;    
+    hints.ai_socktype = SOCK_DGRAM; 
+    hints.ai_flags = AI_PASSIVE;    
 
     if (getaddrinfo(NULL, PORT, &hints, &res) != 0) {
         perror("getaddrinfo");
@@ -51,6 +68,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    
     if (res->ai_family == AF_INET6) {
         int no = 0;
         setsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY, &no, sizeof(no));
@@ -62,9 +80,9 @@ int main(int argc, char *argv[]) {
     }
 
     freeaddrinfo(res);
-    printf("Servidor escutando na porta %s...\n", PORT);
+    printf("Servidor escutando na porta %s (Modo: %s)...\n", PORT, argv[1]);
 
-    // 3. Main Loop
+    
     char buffer[BUF_SIZE];
     struct sockaddr_storage client_addr;
     socklen_t addr_len = sizeof(client_addr);
@@ -89,8 +107,10 @@ int main(int argc, char *argv[]) {
                 printf("\n[TELEMETRIA RECEBIDA]\n");
                 payload_telemetria_t *telemetria = (payload_telemetria_t *)(buffer + sizeof(header_t));
                 
+                
                 send_ack(sockfd, (struct sockaddr *)&client_addr, addr_len, ACK_TELEMETRIA);
 
+                
                 int total_cities = ntohl(telemetria->total); 
                 
                 printf("Total de cidades monitoradas: %d\n", total_cities);
@@ -101,7 +121,14 @@ int main(int argc, char *argv[]) {
 
                     if (city_status == 1) {
                         printf("ALERTA: %s (ID=%d)\n", amazonia_graph.nodes[city_id].name, city_id);
+                        
+                        
+                        if (city_mission_active[city_id] == 1) {
+                            printf(" -> Já existe equipe atuando em %s. Alerta ignorado.\n", amazonia_graph.nodes[city_id].name);
+                            continue;
+                        }
 
+                        
                         int dist = -1;
                         int best_team = find_nearest_drone(&amazonia_graph, city_id, drone_teams_status, &dist);
 
@@ -111,8 +138,11 @@ int main(int argc, char *argv[]) {
                             printf("> Dijkstra: Capital %s (ID=%d) selecionada, distancia = %d km\n", 
                                    amazonia_graph.nodes[best_team].name, best_team, dist);
                             
+                            
                             drone_teams_status[best_team] = 1;
+                            city_mission_active[city_id] = 1;
 
+                            
                             header_t resp_header;
                             payload_equipe_drone_t resp_payload;
 
@@ -159,7 +189,10 @@ int main(int argc, char *argv[]) {
                 printf("Cidade atendida: %s (ID=%d)\n", amazonia_graph.nodes[city_id].name, city_id);
                 printf("Equipe: %s (ID=%d)\n", amazonia_graph.nodes[team_id].name, team_id);
                 
+                
                 drone_teams_status[team_id] = 0;
+                city_mission_active[city_id] = 0;
+
                 printf("Equipe %s liberada para novas missoes\n", amazonia_graph.nodes[team_id].name);
 
                 send_ack(sockfd, (struct sockaddr *)&client_addr, addr_len, ACK_CONCLUSAO);
