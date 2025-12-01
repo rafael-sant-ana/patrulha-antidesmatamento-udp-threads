@@ -80,13 +80,11 @@ void *thread_monitoring(void *_arg) {
     return NULL;
 }
 
-
 void *thread_telemetry(void *arg) {
     printf("[Thread Telemetria] Iniciada\n");
 
     while (1) {
-        
-        sleep(30);
+        sleep(30); 
 
         printf("\n[ENVIANDO TELEMETRIA]\n");
 
@@ -95,54 +93,65 @@ void *thread_telemetry(void *arg) {
         
         header.type = htons(MSG_TELEMETRIA);
         header.length = htons(sizeof(payload_telemetria_t));
-        
+
         pthread_mutex_lock(&status_mutex);
         payload.total = htonl(amazonia_map.num_nodes);
         
-        printf("Total de cidades: %d\n", amazonia_map.num_nodes);
+        
         for (int i = 0; i < amazonia_map.num_nodes; i++) {
             payload.dados[i].id_cidade = htonl(amazonia_map.nodes[i].id);
             payload.dados[i].status = htonl(current_status[i]);
-            
             if (current_status[i] == 1) {
                 printf("ALERTA: %s (ID=%d)\n", amazonia_map.nodes[i].name, i);
             }
         }
         pthread_mutex_unlock(&status_mutex);
 
-        
         char buffer[sizeof(header_t) + sizeof(payload_telemetria_t)];
         memcpy(buffer, &header, sizeof(header_t));
         memcpy(buffer + sizeof(header_t), &payload, sizeof(payload_telemetria_t));
 
-        
-        send_udp_packet(buffer, sizeof(buffer));
+        int attempt = 0;
+        int ack_received_local = 0;
 
-        
-        pthread_mutex_lock(&mutex_telemetry_ack);
-        struct timeval now;
-        struct timespec timeout;
-        gettimeofday(&now, NULL);
-        timeout.tv_sec = now.tv_sec + 5; 
-        timeout.tv_nsec = now.tv_usec * 1000;
+        while (attempt < 3 && !ack_received_local) {
+            if (attempt > 0) printf(" -> Reenviando telemetria (Tentativa %d/3)...\n", attempt + 1);
+            
+            send_udp_packet(buffer, sizeof(buffer));
 
-        while (telemetry_ack_received == 0) {
-            int rc = pthread_cond_timedwait(&cond_telemetry_ack, &mutex_telemetry_ack, &timeout);
-            if (rc != 0) {
-                printf("Timeout aguardando ACK de telemetria (tentativa única nesta versao).\n");
-                break;
+            pthread_mutex_lock(&mutex_telemetry_ack);
+            struct timeval now;
+            struct timespec timeout;
+            gettimeofday(&now, NULL);
+            timeout.tv_sec = now.tv_sec + 5;
+            timeout.tv_nsec = now.tv_usec * 1000;
+
+            telemetry_ack_received = 0; 
+
+            while (telemetry_ack_received == 0) {
+                int rc = pthread_cond_timedwait(&cond_telemetry_ack, &mutex_telemetry_ack, &timeout);
+                if (rc != 0) {
+                    break;
+                }
             }
+
+            if (telemetry_ack_received) {
+                printf("ACK recebido do servidor (Telemetria)\n");
+                ack_received_local = 1;
+            } else {
+                printf("Timeout aguardando ACK de telemetria.\n");
+            }
+            pthread_mutex_unlock(&mutex_telemetry_ack);
+            
+            attempt++;
         }
-        
-        if (telemetry_ack_received) {
-            printf("ACK recebido do servidor (Telemetria)\n");
+
+        if (!ack_received_local) {
+            printf("FALHA: Servidor não respondeu após 3 tentativas. Ignorando ciclo.\n");
         }
-        telemetry_ack_received = 0; 
-        pthread_mutex_unlock(&mutex_telemetry_ack);
     }
     return NULL;
 }
-
 
 void *thread_drone_sim(void *_arg) {
     printf("[Thread Simulacao Drones] Iniciada\n");

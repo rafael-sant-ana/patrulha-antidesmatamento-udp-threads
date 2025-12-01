@@ -4,6 +4,7 @@
     ".prettierrc": "json",
     "*.css": "css",
     "common.h": "c",
-    "inet.h": "c"
+    "inet.h": "c",
+    "time.h": "c"
   }
 }

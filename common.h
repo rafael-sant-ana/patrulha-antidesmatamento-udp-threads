@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define PORT "8080"
-#define BUF_SIZE 4096
+#define BUF_SIZE 2048
 
 #define MSG_TELEMETRIA 1
 #define MSG_ACK 2
